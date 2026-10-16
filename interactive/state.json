@@ -29,14 +29,14 @@
   "h3ctrl_022_00001_.mp4",
   "h3ctrl_023_00001_.mp4"
  ],
- "gen_no": 24,
- "busy": true,
- "last_msg": "generating h3ctrl_024: [{'len_px': 338.5, 'turn_deg': -10.5}]",
+ "gen_no": 141,
+ "busy": false,
+ "last_msg": "error: leg dropped after 12 failed tries (6 samples)",
  "sim_pos": [
-  740,
-  725
+  478,
+  417
  ],
- "sim_heading": 63.43494882292201,
+ "sim_heading": 0.0,
  "gen_pos": [
   798,
   386
@@ -447,5 +447,20 @@
   ],
   "autopilot": true,
   "loaded": "11:42:28"
+ },
+ "pf": {
+  "status": "idle",
+  "anchor": null,
+  "file": null,
+  "ex": 680,
+  "ey": 499,
+  "heading": 88.71388717823805,
+  "ev": null,
+  "started": 1792166340.5564735,
+  "hits": 0,
+  "misses": 0,
+  "expired": 0,
+  "tries": 1,
+  "msg": "prefetch lane :8190 not up yet"
  }
 }

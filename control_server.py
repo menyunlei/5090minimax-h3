@@ -27,7 +27,10 @@ STATE_DIR.mkdir(exist_ok=True)
 STATE_FILE = STATE_DIR / "state.json"
 OUT_DIR = Path(r"C:\Users\yunlei\AppData\Local\Comfy-Desktop\ComfyUI-Shared\output")
 IN_DIR = Path(r"C:\Users\yunlei\AppData\Local\Comfy-Desktop\ComfyUI-Shared\input")
-COMFY = "http://127.0.0.1:8189"
+COMFY = "http://127.0.0.1:8189"        # GPU1 authoritative chain lane
+COMFY_PRE = "http://127.0.0.1:8190"    # GPU0 speculative prefetch lane
+PF_TOL_PX = 90.0    # endpoint distance tolerance for a prefetch hit
+PF_TOL_ANG = 40.0   # end-heading tolerance for a prefetch hit
 ROUTE_MAP_REF = "yym_route_v4b.png"      # conditioning map (clean)
 USER_MAP = BASE / "yym_route_v4.png"     # labelled map shown in the page
 PATH_SRC = BASE / "yym_orig_nl_px.png"   # raw pixel map for path snapping (un-annotated)
@@ -56,6 +59,10 @@ def init_state():
         st.setdefault("busy", False)
         st.setdefault("evals", [])
         st.setdefault("mission", None)
+        st.setdefault("pf", {"status": "idle", "anchor": None, "file": None,
+                             "ex": 0, "ey": 0, "heading": 0.0, "ev": None,
+                             "started": 0, "hits": 0, "misses": 0, "expired": 0,
+                             "tries": 0, "msg": ""})
         return st
     st = {"pos": [676, 894], "heading": 180.0,
           "sim_pos": [676, 894], "sim_heading": 180.0,
@@ -290,13 +297,13 @@ def build_job(prefix, anchor_png, prompt, length=241):
             "video": ["14", 0], "filename_prefix": prefix, "format": "auto"}},
     }, "client_id": "zcode-h3-steer"}
 
-def post_prompt(wf):
-    req = urllib.request.Request(COMFY + "/prompt", data=json.dumps(wf).encode(),
+def post_prompt(wf, base=None):
+    req = urllib.request.Request((base or COMFY) + "/prompt", data=json.dumps(wf).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
 
-def generate_one(samples):
+def generate_one(samples, t0=None):
     """Render one queued trajectory leg; returns True on success. Advances gen head + evals."""
     with LOCK:
         gen_no = ST["gen_no"] + 1
@@ -330,6 +337,8 @@ def generate_one(samples):
             raise RuntimeError("timeout waiting for output")
         ev = evaluate_clip(prev_clip, p)
         with LOCK:
+            if t0:
+                ev["lag_s"] = round(time.time() - t0, 1)
             ST["clips"].append(out_name)
             ST["gen_pos"] = [ex, ey]
             ST["gen_heading"] = end_heading
@@ -342,11 +351,179 @@ def generate_one(samples):
             save()
         return True
     except Exception as e:
+        kind = "poison" if "trajectory too short" in str(e) else "transient"
         with LOCK:
             ST["busy"] = False
             ST["last_msg"] = f"error: {e}"
             save()
+        return kind
+
+def comfy_alive(base):
+    try:
+        with urllib.request.urlopen(base + "/system_stats", timeout=4) as r:
+            return r.status == 200
+    except Exception:
         return False
+
+def predict_leg():
+    """Predict the rider's NEXT leg: continue from the video head, preferring the
+    current heading; at dead ends probe heading offsets (junction fork coverage).
+    Returns (snapped_samples, heading_used) or None."""
+    with LOCK:
+        gx, gy = ST["gen_pos"]
+        gh = ST["gen_heading"]
+    for off in (0.0, -40.0, 40.0, -80.0, 80.0):
+        h = (gh + off) % 360
+        r = math.radians(h)
+        steps = 26
+        raw = [[int(gx + math.cos(r) * 8.1 * i), int(gy + math.sin(r) * 8.1 * i)]
+               for i in range(steps + 1)]
+        snapped, worst = snap_traj(raw)
+        if len(snapped) < 2 or worst > 70:
+            continue
+        plen = sum(math.hypot(snapped[i][0] - snapped[i-1][0],
+                              snapped[i][1] - snapped[i-1][1])
+                   for i in range(1, len(snapped)))
+        if plen >= 120:
+            return snapped, h
+    return None, None
+
+def prefetch_loop():
+    """GPU0 speculative lane: renders the predicted next leg ahead of the rider.
+    A ready prefetch is consumed instantly by worker_loop when the rider's real
+    leg lands within tolerance; stale ones (chain head moved) are discarded."""
+    while True:
+        time.sleep(20)
+        try:
+            with LOCK:
+                pf = ST["pf"]
+                status = pf["status"]
+                anchor = pf["anchor"]
+                head = ST["clips"][-1]
+                pf_file = pf["file"]
+            if status == "rendering" and pf_file:
+                p = OUT_DIR / pf_file
+                if p.exists() and p.stat().st_size > 100000:
+                    time.sleep(2)
+                    with LOCK:
+                        still = ST["clips"][-1] == anchor and ST["pf"]["status"] == "rendering"
+                    if still:
+                        ev = evaluate_clip(OUT_DIR / anchor, p)
+                        with LOCK:
+                            ST["pf"].update({"status": "ready", "ev": ev,
+                                             "msg": f"ready: {pf_file}"})
+                            save()
+                    else:
+                        with LOCK:
+                            if ST["pf"]["anchor"] == anchor:
+                                ST["pf"]["expired"] += 1
+                                ST["pf"]["status"] = "idle"
+                                ST["pf"]["msg"] = f"expired mid-render: {pf_file}"
+                                save()
+                else:
+                    with LOCK:
+                        started = ST["pf"]["started"]
+                    if time.time() - started > 1500:
+                        with LOCK:
+                            if ST["pf"]["status"] == "rendering" and ST["pf"]["anchor"] == anchor:
+                                ST["pf"]["expired"] += 1
+                                ST["pf"]["status"] = "idle"
+                                ST["pf"]["anchor"] = ST["pf"]["file"] = None
+                                ST["pf"]["msg"] = (f"prefetch render timed out after "
+                                                   f"{int(time.time()-started)}s (lane dead?)")
+                                save()
+                continue
+            if status == "ready":
+                if anchor != head:
+                    with LOCK:
+                        ST["pf"]["expired"] += 1
+                        ST["pf"]["status"] = "idle"
+                        ST["pf"]["anchor"] = ST["pf"]["file"] = None
+                        ST["pf"]["msg"] = "expired: chain head moved past the prediction"
+                        save()
+                continue
+            if status != "idle":
+                continue
+            if not comfy_alive(COMFY_PRE):
+                with LOCK:
+                    ST["pf"]["msg"] = "prefetch lane :8190 not up yet"
+                continue
+            samples, h = predict_leg()
+            if samples is None:
+                with LOCK:
+                    ST["pf"]["msg"] = "no valid prediction from head (dead end?)"
+                continue
+            with LOCK:
+                anchor = ST["clips"][-1]
+                gh = ST["gen_heading"]
+                ST["pf"]["tries"] += 1
+                tag = ST["pf"]["tries"] % 1000
+            built = spec_from_traj(samples, gh)
+            if built is None:
+                continue
+            spec, (ex, ey), end_heading, _pm = built
+            anchor_png = f"steer_anchor_pre_{tag:03d}.png"
+            Image.fromarray(last_frame_of(OUT_DIR / anchor)).save(IN_DIR / anchor_png)
+            prefix = f"h3pre_{tag:03d}"
+            prompt = MAP + "\n\n" + CONT + "\n\n" + POV + "\n\n" + spec
+            post_prompt(build_job(prefix, anchor_png, prompt), base=COMFY_PRE)
+            with LOCK:
+                ST["pf"].update({"status": "rendering", "anchor": anchor,
+                                 "file": f"{prefix}_00001_.mp4", "ex": ex, "ey": ey,
+                                 "heading": end_heading, "started": time.time(),
+                                 "msg": f"rendering prefetch {prefix} -> ({ex},{ey})"})
+                save()
+        except Exception as e:
+            with LOCK:
+                ST["pf"]["msg"] = f"prefetch error: {e}"
+            time.sleep(30)
+
+def try_consume_prefetch(item):
+    """If GPU0's prefetch matches this committed leg, chain it instantly. True=consumed."""
+    end = item["samples"][-1]
+    h0 = item["samples"][-2]
+    leg_head = math.degrees(math.atan2(end[1] - h0[1], end[0] - h0[0])) % 360
+    with LOCK:
+        pf = ST["pf"]
+        head = ST["clips"][-1]
+        t0 = item.get("t0")
+    if pf.get("status") != "ready" or pf.get("anchor") != head:
+        return False
+    gap = math.hypot(pf["ex"] - end[0], pf["ey"] - end[1])
+    dgap = abs(ang_diff(pf["heading"], leg_head))
+    if gap > PF_TOL_PX or dgap > PF_TOL_ANG:
+        with LOCK:
+            ST["pf"]["misses"] += 1
+            ST["pf"]["msg"] = (f"miss: leg end ({end[0]},{end[1]}) {leg_head:.0f}deg vs "
+                               f"prediction ({pf['ex']},{pf['ey']}) {pf['heading']:.0f}deg "
+                               f"(gap {gap:.0f}px/{dgap:.0f}deg)")
+            save()
+        return False
+    p = OUT_DIR / pf["file"]
+    if not p.exists():
+        with LOCK:
+            ST["pf"]["status"] = "idle"
+        return False
+    ev = pf.get("ev") or evaluate_clip(OUT_DIR / head, p)
+    with LOCK:
+        if t0:
+            ev["lag_s"] = round(time.time() - t0, 1)
+        ST["clips"].append(pf["file"])
+        ST["gen_pos"] = [pf["ex"], pf["ey"]]
+        ST["gen_heading"] = pf["heading"]
+        ST["pos"] = [pf["ex"], pf["ey"]]
+        ST["heading"] = pf["heading"]
+        ST["pf"]["hits"] += 1
+        ST["pf"]["status"] = "idle"
+        ST["pf"]["anchor"] = ST["pf"]["file"] = None
+        ST["pf"]["msg"] = "consumed"
+        ST["last_msg"] = (f"PREFETCH HIT: {pf['file']} chained instantly "
+                          f"(gap {gap:.0f}px, lag {ev.get('lag_s', '?')}s)")
+        ST["evals"].append({"hop": pf["file"], "to": [pf["ex"], pf["ey"]],
+                            "phases": [{"len_px": "prefetch", "turn_deg": 0}],
+                            "ts": time.strftime("%H:%M:%S"), "prefetch": True, **ev})
+        save()
+    return True
 
 def worker_loop():
     while True:
@@ -359,13 +536,23 @@ def worker_loop():
                     save()
             if item is None:
                 break
-            ok = generate_one(item["samples"])
-            if not ok and not item.get("retried"):
-                item["retried"] = True
+            if try_consume_prefetch(item):
+                continue
+            res = generate_one(item["samples"], item.get("t0"))
+            if res == "poison":
+                with LOCK:
+                    ST["last_msg"] = (f"dropped a poisoned leg "
+                                      f"({len(item.get('samples', []))} samples)")
+                    save()
+                continue
+            if res is not True:
+                item["tries"] = item.get("tries", 0) + 1
                 with LOCK:
                     ST["queue"].insert(0, item)
+                    base_msg = ST["last_msg"].split(" | lane down")[0]
+                    ST["last_msg"] = f"{base_msg} | lane down, retry #{item['tries']} in 45s"
                     save()
-                time.sleep(20)
+                time.sleep(45)
                 KICK.set()
                 break
 
@@ -562,6 +749,8 @@ class H(BaseHTTPRequestHandler):
                                         "sim_pos", "sim_heading", "gen_pos", "gen_heading",
                                         "gen_no")}
                 d["queue_len"] = len(ST["queue"])
+                d["pf"] = {k: ST["pf"][k] for k in ("status", "msg", "hits",
+                                                    "misses", "expired")}
             self._send(200, json.dumps(d), "application/json")
         elif u.startswith("/clip/"):
             name = u.split("/", 2)[2]
@@ -602,7 +791,7 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 if len(ST["queue"]) >= MAX_QUEUE:
                     self._send(429, f"render queue full ({MAX_QUEUE} legs)"); return
-                ST["queue"].append({"samples": snapped})
+                ST["queue"].append({"samples": snapped, "t0": time.time()})
                 ST["sim_pos"] = snapped[-1]
                 ST["sim_heading"] = math.degrees(math.atan2(
                     snapped[-1][1] - snapped[-2][1], snapped[-1][0] - snapped[-2][0])) % 360
@@ -627,7 +816,7 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 if len(ST["queue"]) >= MAX_QUEUE:
                     self._send(429, f"render queue full ({MAX_QUEUE} legs)"); return
-                ST["queue"].append({"samples": snapped})
+                ST["queue"].append({"samples": snapped, "t0": time.time()})
                 ST["sim_pos"] = [sx, sy]
                 qlen = len(ST["queue"])
                 save()
@@ -641,10 +830,20 @@ if __name__ == "__main__":
     # boot recovery: a restart kills the old worker but ComfyUI may still be
     # rendering its job; entries pop-and-generate sequentially from here.
     ST["busy"] = False
+    pf = ST["pf"]
+    if pf.get("status") in ("rendering", "ready"):
+        if pf.get("file") and (OUT_DIR / pf["file"]).exists() and \
+                pf.get("anchor") == ST["clips"][-1]:
+            pf["status"] = "ready"   # survived a restart; still usable
+        else:
+            pf["status"] = "idle"
+            pf["anchor"] = pf["file"] = None
     if ST["queue"]:
         ST["last_msg"] = f"boot: draining render queue ({len(ST['queue'])} legs pending)"
     save()
     threading.Thread(target=worker_loop, daemon=True).start()
+    threading.Thread(target=prefetch_loop, daemon=True).start()
     KICK.set()
-    print("serving on http://127.0.0.1:8787  ( /drive manual, /mission self-play, GPU1 -> :8189 )")
+    print("serving on http://127.0.0.1:8787  ( /drive manual, /mission self-play)")
+    print("lanes: GPU1 chain :8189, GPU0 prefetch :8190")
     ThreadingHTTPServer(("127.0.0.1", 8787), H).serve_forever()
