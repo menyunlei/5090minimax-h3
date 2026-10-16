@@ -1,0 +1,82 @@
+# V2 continuous chain, S1: 241-frame (10s) Ref2V with map. Ride + turn WHILE MOVING,
+# clip ends mid-motion at cruise speed on the causeway. Output prefix h3yym3_.
+import json
+from pathlib import Path
+
+JOBS = Path(r"C:\Users\yunlei\.zcode\workspace\default\h3_map_baseline\jobs_yym3")
+JOBS.mkdir(exist_ok=True)
+
+SCENE = (
+    "a Yuanmingyuan-style imperial garden park in Beijing: tree-lined gravel paths, a big "
+    "ornamental lake with lotus leaves, white-marble ruins blocks of the Western Mansions, "
+    "stone balustrades, a narrow stone causeway, Chinese pavilions in the distance, summer "
+    "daylight"
+)
+
+POV = (
+    "FIRST-PERSON BICYCLE CAMERA, non-negotiable: shot from a camera mounted on the bicycle's "
+    "handlebar at exactly 1.6 meters above the ground, looking straight ahead horizontally. "
+    "The handlebar grips and both of the rider's hands holding them are ALWAYS VISIBLE at the "
+    "bottom edge of the frame, in every frame. The ground surface fills the lower half of the "
+    "frame; trees and balustrades pass at eye level; the horizon stays near the middle. The "
+    "camera NEVER rises above 1.6 m. Absolutely NO aerial view, NO drone shot, NO bird's-eye "
+    "view, NO top-down view.\n\n"
+)
+
+S1 = (
+    "<Picture 1> is the authoritative spatial map of the world, not a visual-style reference. "
+    "Treat it as a top-down geometric specification of " + SCENE + ". Do not imitate the "
+    "appearance of the map; infer plausible 3D terrain and architecture.\n\n"
+    + POV +
+    "ONE CONTINUOUS RIDE, no stopping anywhere (total 10.0 seconds, 24 fps):\n"
+    "- 0.0s-3.5s: ride straight north along the tree-lined gravel path at steady cycling "
+    "speed; the lake with lotus leaves is on your LEFT at eye level.\n"
+    "- 3.5s-6.5s: reach the stone plaza junction and, WITHOUT slowing down, bend the path "
+    "into a smooth continuous LEFT arc of 90 degrees onto the stone causeway that crosses "
+    "the lake. The turn happens WHILE MOVING, like a real cyclist leaning into a bend; the "
+    "view sweeps smoothly to the left.\n"
+    "- 6.5s-10.0s: now riding straight along the causeway at the same steady speed; white "
+    "stone balustrades on both sides at hand height; lotus-covered lake water on BOTH sides; "
+    "a small gate pavilion at the far end grows closer. The clip CUTS while still moving at "
+    "full speed toward the gate — do NOT slow down, do NOT arrive.\n"
+    "The full continuous-motion LEFT turn onto the causeway is the single most important "
+    "goal: heading at 10.0s must be 90 degrees left of the heading at 0s."
+)
+
+def ref2v(prompt, prefix, seed, length, image="yym_orig_nl.png"):
+    return {"prompt": {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {
+            "model": ["1", 0],
+            "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+            "strength_model": 1.0}},
+        "3": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"}},
+        "5": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        "16": {"class_type": "LoadImage", "inputs": {"image": image}},
+        "17": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+            "clip": ["3", 0], "vae": ["4", 0], "prompt": prompt,
+            "width": 1344, "height": 768, "length": length, "ref_image_size": "match",
+            "ref_images.ref_image_1": ["16", 0]}},
+        "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "9": {"class_type": "BasicScheduler", "inputs": {
+            "model": ["2", 0], "scheduler": "simple", "steps": 8, "denoise": 1.0}},
+        "10": {"class_type": "BasicGuider", "inputs": {"model": ["2", 0], "conditioning": ["17", 0]}},
+        "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["7", 0], "guider": ["10", 0], "sampler": ["8", 0],
+            "sigmas": ["9", 0], "latent_image": ["17", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 0]}},
+        "13": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+        "14": {"class_type": "CreateVideo", "inputs": {
+            "images": ["12", 0], "fps": 24, "audio": ["13", 0], "codec": "auto"}},
+        "15": {"class_type": "SaveVideo", "inputs": {
+            "video": ["14", 0], "filename_prefix": prefix, "format": "auto"}},
+    }, "client_id": "zcode-h3-yym3"}
+
+wf = ref2v(S1, "h3yym3_s1", 42, 241)
+with open(JOBS / "s1.json", "w") as f:
+    json.dump(wf, f, indent=1)
+print("built s1 (241 frames = 10.0s)")

@@ -1,0 +1,65 @@
+# Chained turn experiment (autoregressive route segmentation).
+# seg1: Ref2V with C2_orig map. Ride straight and end exactly at the corner facing the intersection.
+# seg2 (built later, after seg1 last frames are extracted): I2V with first_frame = seg1 last frame,
+#       hard-anchor a 90-degree LEFT turn in the first ~2.5 s, then ride straight.
+import json, os
+
+JOBS = r"C:\Users\yunlei\.zcode\workspace\default\h3_map_baseline\jobs_chain"
+os.makedirs(JOBS, exist_ok=True)
+
+PROMPT_SEG1 = (
+    "<Picture 1> is the authoritative spatial map of the world, not a visual-style reference. "
+    "Treat it as a top-down geometric specification: infer plausible 3D buildings and roads while "
+    "preserving road topology, intersections and building blocks.\n\n"
+    "Generation task: a continuous, photorealistic first-person bicycle ride toward the four-way "
+    "intersection ahead. Camera height about 1.6 meters, smooth forward motion at cycling speed, "
+    "natural head stabilization, no cuts.\n\n"
+    "CRITICAL ending constraint: the clip must END with the camera stopped right AT the corner of "
+    "the intersection, facing straight into the crossing exactly perpendicular to the stop line. "
+    "In the final frames the crosswalk is directly ahead and the cross street is visible running "
+    "left-to-right in front of the camera. Do not enter the intersection; do not turn.\n\n"
+    "Visual quality: realistic urban environment, brick buildings on both sides, daylight."
+)
+
+SEEDS = [42, 1337, 20261006]
+
+def ref2v(prompt, prefix, seed, image):
+    return {"prompt": {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {
+            "model": ["1", 0],
+            "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+            "strength_model": 1.0}},
+        "3": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"}},
+        "5": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        "16": {"class_type": "LoadImage", "inputs": {"image": image}},
+        "17": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+            "clip": ["3", 0], "vae": ["4", 0], "prompt": prompt,
+            "width": 1344, "height": 768, "length": 124, "ref_image_size": "match",
+            "ref_images.ref_image_1": ["16", 0]}},
+        "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "9": {"class_type": "BasicScheduler", "inputs": {
+            "model": ["2", 0], "scheduler": "simple", "steps": 8, "denoise": 1.0}},
+        "10": {"class_type": "BasicGuider", "inputs": {"model": ["2", 0], "conditioning": ["17", 0]}},
+        "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["7", 0], "guider": ["10", 0], "sampler": ["8", 0],
+            "sigmas": ["9", 0], "latent_image": ["17", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 0]}},
+        "13": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+        "14": {"class_type": "CreateVideo", "inputs": {
+            "images": ["12", 0], "fps": 24, "audio": ["13", 0], "codec": "auto"}},
+        "15": {"class_type": "SaveVideo", "inputs": {
+            "video": ["14", 0], "filename_prefix": prefix, "format": "auto"}},
+    }, "client_id": "zcode-h3-chain"}
+
+for si, seed in enumerate(SEEDS, 1):
+    tag = f"seg1_s{si}"
+    wf = ref2v(PROMPT_SEG1, "h3chain_" + tag, seed, "C2_orig_nl.png")
+    with open(os.path.join(JOBS, tag + ".json"), "w") as f:
+        json.dump(wf, f, indent=1)
+    print("built", tag, "seed", seed)
+print("done: 3 seg1 jobs")

@@ -1,0 +1,5 @@
+__pycache__/
+*.log
+*.err.log
+wulin_chuanyue/
+short_drama/

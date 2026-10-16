@@ -1,0 +1,81 @@
+# Yuanmingyuan v2 step 2: rot jobs anchored on yym2 seg1 last frames, POV-locked.
+import av, json
+from PIL import Image
+from pathlib import Path
+
+OUT_DIR = Path(r"C:\Users\yunlei\AppData\Local\Comfy-Desktop\ComfyUI-Shared\output")
+IN_DIR = Path(r"C:\Users\yunlei\AppData\Local\Comfy-Desktop\ComfyUI-Shared\input")
+JOBS = Path(r"C:\Users\yunlei\.zcode\workspace\default\h3_map_baseline\jobs_yym2")
+SEEDS = [42, 1337, 20261006]
+
+PROMPT_ROT = (
+    "A first-person bicycle camera — handlebar grips and the rider's hands ALWAYS VISIBLE at "
+    "the bottom of the frame, camera locked at exactly 1.6 meters above the ground, NEVER "
+    "rising, no aerial view, no drone shot — stands stopped at a stone plaza junction in a "
+    "Yuanmingyuan-style imperial garden park, exactly as in the first frame: the tree-lined "
+    "path continues straight ahead, and a narrow stone causeway branches off to the LEFT "
+    "toward the ornamental lake, seen from rider height.\n\n"
+    "The bicycle stays parked at the SAME SPOT for the entire clip; the rider only turns the "
+    "handlebar and the view rotates IN PLACE — it does NOT ride forward.\n\n"
+    "MANDATORY TIMELINE (total 5.2 seconds):\n"
+    "- 0.0s-0.5s: hold still, handlebar in frame, then begin yawing LEFT at a constant rate.\n"
+    "- 0.5s-4.0s: the view pans smoothly and continuously LEFT around the fixed position; the "
+    "path ahead sweeps toward the right edge; the causeway and the lake pivot in from the left, "
+    "all at eye level.\n"
+    "- 4.0s-5.2s: rotation complete — a FULL 90 degrees LEFT. The camera now faces straight "
+    "along the stone causeway at 1.6 m height; lake water with lotus leaves is visible on BOTH "
+    "sides of the view; handlebar and hands still in frame. Hold this heading.\n\n"
+    "The 90-degree in-place rotation is the single most important goal. No forward motion, "
+    "no cuts, no dissolves, no camera rise. Photorealistic park scenery, summer daylight."
+)
+
+def last_frame(p):
+    with av.open(str(p)) as c:
+        fr = None
+        for f in c.decode(c.streams.video[0]):
+            fr = f.to_ndarray(format="rgb24")
+        return fr
+
+def i2v(prompt, prefix, seed, first_png):
+    return {"prompt": {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {
+            "model": ["1", 0],
+            "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+            "strength_model": 1.0}},
+        "3": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"}},
+        "5": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        "16": {"class_type": "LoadImage", "inputs": {"image": first_png}},
+        "17": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
+            "clip": ["3", 0], "vae": ["4", 0], "prompt": prompt,
+            "width": 1344, "height": 768, "length": 124, "first_frame": ["16", 0]}},
+        "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "9": {"class_type": "BasicScheduler", "inputs": {
+            "model": ["2", 0], "scheduler": "simple", "steps": 8, "denoise": 1.0}},
+        "10": {"class_type": "BasicGuider", "inputs": {"model": ["2", 0], "conditioning": ["17", 0]}},
+        "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["7", 0], "guider": ["10", 0], "sampler": ["8", 0],
+            "sigmas": ["9", 0], "latent_image": ["17", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 0]}},
+        "13": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+        "14": {"class_type": "CreateVideo", "inputs": {
+            "images": ["12", 0], "fps": 24, "audio": ["13", 0], "codec": "auto"}},
+        "15": {"class_type": "SaveVideo", "inputs": {
+            "video": ["14", 0], "filename_prefix": prefix, "format": "auto"}},
+    }, "client_id": "zcode-h3-yym2"}
+
+for si, seed in enumerate(SEEDS, 1):
+    src = OUT_DIR / f"h3yym2_seg1_s{si}_00001_.mp4"
+    if not src.exists():
+        print("MISSING", src.name); continue
+    png = f"yym2_seg1_last_s{si}.png"
+    Image.fromarray(last_frame(src)).save(IN_DIR / png)
+    wf = i2v(PROMPT_ROT, f"h3yym2_rot_s{si}", seed, png)
+    with open(JOBS / f"rot_s{si}.json", "w") as f:
+        json.dump(wf, f, indent=1)
+    print(f"built rot_s{si} anchored on {png}")
+print("done")

@@ -1,0 +1,183 @@
+{
+ "prompt": {
+  "1": {
+   "class_type": "UNETLoader",
+   "inputs": {
+    "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  "2": {
+   "class_type": "LoraLoaderModelOnly",
+   "inputs": {
+    "model": [
+     "1",
+     0
+    ],
+    "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+    "strength_model": 1.0
+   }
+  },
+  "3": {
+   "class_type": "CLIPLoader",
+   "inputs": {
+    "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "type": "minimax"
+   }
+  },
+  "4": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+   }
+  },
+  "5": {
+   "class_type": "VAELoader",
+   "inputs": {
+    "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+   }
+  },
+  "16": {
+   "class_type": "LoadImage",
+   "inputs": {
+    "image": "turn_seg1_last_s1.png"
+   }
+  },
+  "17": {
+   "class_type": "MiniMaxH3ImageToVideo",
+   "inputs": {
+    "clip": [
+     "3",
+     0
+    ],
+    "vae": [
+     "4",
+     0
+    ],
+    "prompt": "A first-person bicycle camera starts exactly at the corner of the intersection shown in the first frame, facing straight into the crossing toward the crosswalk.\n\nMANDATORY TIMELINE (total 5.2 seconds):\n- 0.0s-0.5s: begin moving and immediately start turning the handlebars LEFT.\n- 0.5s-2.5s: rotate the view smoothly and continuously LEFT by a full 90 degrees. The intersection ahead sweeps toward the right edge of the frame; the cross street on the left pivots into the center of the view.\n- 2.5s-5.2s: the turn is COMPLETE \u2014 the camera now faces straight down the cross street that was on the LEFT at t=0. Ride straight along it, buildings on both sides.\n\nThe FULL 90-degree rotation is the single most important goal: the final heading must be perpendicular (90 degrees left) to the first frame's heading. Do not stop rotating early, do not keep crossing straight ahead.\n\nCamera height about 1.6 meters, smooth continuous motion, natural head stabilization, no cuts, no dissolves. Photorealistic urban environment, brick buildings, daylight.",
+    "width": 1344,
+    "height": 768,
+    "length": 124,
+    "first_frame": [
+     "16",
+     0
+    ]
+   }
+  },
+  "7": {
+   "class_type": "RandomNoise",
+   "inputs": {
+    "noise_seed": 42
+   }
+  },
+  "8": {
+   "class_type": "KSamplerSelect",
+   "inputs": {
+    "sampler_name": "euler"
+   }
+  },
+  "9": {
+   "class_type": "BasicScheduler",
+   "inputs": {
+    "model": [
+     "2",
+     0
+    ],
+    "scheduler": "simple",
+    "steps": 8,
+    "denoise": 1.0
+   }
+  },
+  "10": {
+   "class_type": "BasicGuider",
+   "inputs": {
+    "model": [
+     "2",
+     0
+    ],
+    "conditioning": [
+     "17",
+     0
+    ]
+   }
+  },
+  "11": {
+   "class_type": "SamplerCustomAdvanced",
+   "inputs": {
+    "noise": [
+     "7",
+     0
+    ],
+    "guider": [
+     "10",
+     0
+    ],
+    "sampler": [
+     "8",
+     0
+    ],
+    "sigmas": [
+     "9",
+     0
+    ],
+    "latent_image": [
+     "17",
+     1
+    ]
+   }
+  },
+  "12": {
+   "class_type": "VAEDecode",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "4",
+     0
+    ]
+   }
+  },
+  "13": {
+   "class_type": "VAEDecodeAudio",
+   "inputs": {
+    "samples": [
+     "11",
+     0
+    ],
+    "vae": [
+     "5",
+     0
+    ]
+   }
+  },
+  "14": {
+   "class_type": "CreateVideo",
+   "inputs": {
+    "images": [
+     "12",
+     0
+    ],
+    "fps": 24,
+    "audio": [
+     "13",
+     0
+    ],
+    "codec": "auto"
+   }
+  },
+  "15": {
+   "class_type": "SaveVideo",
+   "inputs": {
+    "video": [
+     "14",
+     0
+    ],
+    "filename_prefix": "h3chain_seg2_s1",
+    "format": "auto"
+   }
+  }
+ },
+ "client_id": "zcode-h3-chain"
+}

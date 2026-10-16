@@ -1,0 +1,81 @@
+"""v4 H1 opener: Ref2V with the annotated route map as the only reference.
+Route leg L1: start at W0 on the causeway, ride EAST, water both sides, toward the W1 junction."""
+import json
+from pathlib import Path
+
+BASE = Path(r"C:\Users\yunlei\.zcode\workspace\default\h3_map_baseline")
+JOBS = BASE / "jobs_v4"
+JOBS.mkdir(exist_ok=True)
+
+POV = ("FIRST-PERSON BICYCLE CAMERA, non-negotiable: shot from a camera mounted on the "
+       "bicycle's handlebar at exactly 1.6 meters above the ground, looking straight ahead "
+       "horizontally. The handlebar grips and both of the rider's hands holding them are "
+       "ALWAYS VISIBLE at the bottom edge of the frame, in every frame. The ground surface "
+       "fills the lower half of the frame; the horizon stays near the middle. The camera "
+       "NEVER rises above 1.6 m. Absolutely NO aerial view, NO drone shot, NO bird's-eye, "
+       "NO top-down view.")
+
+MAP = ("<Picture 1> is the AUTHORITATIVE NAVIGATION MAP of this ride: a top-down map of a "
+       "Yuanmingyuan-style imperial garden park with the ride route drawn as a RED LINE, "
+       "north pointing up (see compass). Treat it as a GEOMETRIC SPECIFICATION ONLY, never "
+       "as a visual-style or content reference: blue = ornamental lake with lotus leaves, "
+       "grey = stone paths, green dots = trees, black blocks = red-walled imperial halls. "
+       "The map is a flat planning legend only; it must NEVER appear inside the video world "
+       "in any form - no red lines or stripes anywhere, no colored dots, no floating or "
+       "painted markers, no text, no rings. The real causeway is plain grey stone. "
+       "You are the rider. The route starts at the west end of the lake causeway (marked "
+       "'start'), goes EAST along the causeway to the junction plaza (marked 'turn'), then "
+       "turns RIGHT (SOUTH) onto the lakeside path ending at a lakeside terrace (marked "
+       "'end').")
+
+SPEC = ("ONE CONTINUOUS RIDE, no stopping anywhere (total 10.0 seconds at 24 fps). This clip "
+        "covers the FIRST half of leg L1:\n"
+        "- RIDE EAST along the narrow stone causeway crossing the lake at steady cycling "
+        "speed; white marble balustrades glide past on both sides at hand height; lotus-"
+        "covered lake water shines on BOTH sides of the causeway; distant willows, pavilion "
+        "roofs and the red-walled halls near the far junction plaza grow slowly closer.\n"
+        "- The junction plaza (W1 on the map) stays far ahead; you do NOT reach it yet.\n"
+        "- The clip CUTS while still moving at full cruise speed east along the causeway - "
+        "do NOT slow down, do NOT turn, no cuts inside the clip.\n"
+        "Most important spatial fact from the map: on this leg the open lake water is on "
+        "BOTH your left and right, reaching the horizon, because the causeway crosses the "
+        "middle of the lake. Photorealistic, summer daylight, natural head stabilization.")
+
+prompt = MAP + "\n\n" + POV + "\n\n" + SPEC
+
+g = {"prompt": {
+    "1": {"class_type": "UNETLoader", "inputs": {
+        "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+    "2": {"class_type": "LoraLoaderModelOnly", "inputs": {
+        "model": ["1", 0],
+        "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        "strength_model": 1.0}},
+    "3": {"class_type": "CLIPLoader", "inputs": {
+        "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax"}},
+    "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"}},
+    "5": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+    "16": {"class_type": "LoadImage", "inputs": {"image": "yym_route_v4b.png"}},
+    "17": {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": {
+        "clip": ["3", 0], "vae": ["4", 0], "prompt": prompt,
+        "width": 1344, "height": 768, "length": 241,
+        "ref_image_size": "match",
+        "ref_images.ref_image_1": ["16", 0]}},
+    "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": 42}},
+    "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+    "9": {"class_type": "BasicScheduler", "inputs": {
+        "model": ["2", 0], "scheduler": "simple", "steps": 8, "denoise": 1.0}},
+    "10": {"class_type": "BasicGuider", "inputs": {"model": ["2", 0], "conditioning": ["17", 0]}},
+    "11": {"class_type": "SamplerCustomAdvanced", "inputs": {
+        "noise": ["7", 0], "guider": ["10", 0], "sampler": ["8", 0],
+        "sigmas": ["9", 0], "latent_image": ["17", 1]}},
+    "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 0]}},
+    "13": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+    "14": {"class_type": "CreateVideo", "inputs": {
+        "images": ["12", 0], "fps": 24, "audio": ["13", 0], "codec": "auto"}},
+    "15": {"class_type": "SaveVideo", "inputs": {
+        "video": ["14", 0], "filename_prefix": "h3v4_h1", "format": "auto"}},
+}, "client_id": "zcode-h3-v4"}
+
+with open(JOBS / "h1.json", "w") as f:
+    json.dump(g, f, indent=1)
+print("built", JOBS / "h1.json")
