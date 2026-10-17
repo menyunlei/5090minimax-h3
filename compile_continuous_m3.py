@@ -20,15 +20,15 @@ POLY = [(495,1700),(495,1550),(500,1400),(500,1250),(500,1050),(500,830),(502,62
 
 # (frame, x, y) keyframes along the polyline; linear interp in between.
 # S boundaries: S1 0-242 *new-frames*; each following clip adds 242 frames.
-WAY = [  # ESTIMATES - refine vs rendered strips
-    (0,    495,1700),  # S1 start: southern junction
-    (242,  498,1250),  # S1 end
-    (484,  500, 900),  # S2 end: past the piazza
-    (726,  501, 640),  # S3 end: park lawns opening right
-    (968,  503, 460),  # S4 end
-    (1210, 506, 300),  # S5 end
-    (1360, 509, 180),  # S6 mid: stopped, panning right into park
-    (1452, 510, 140),  # end
+WAY = [
+    (0,    495,1700),  # S1 start: southern junction zebra
+    (242,  500,1412),  # S1 end (arc-length interp, ~288px/clip, total route 1559px)
+    (484,  500,1124),  # S2 end
+    (726,  502, 836),  # S3 end: trees opening to grass
+    (968,  503, 548),  # S4 end: park lawns right
+    (1210, 507, 258),  # S5 end: northern stretch
+    (1306, 510, 140),  # S6 glide done (~f96), stopped at route END by the park fence
+    (1452, 510, 140),  # end: dot sits at END through the final pan RIGHT into the park
 ]
 
 def pos_at(f):
