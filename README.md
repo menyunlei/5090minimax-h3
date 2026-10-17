@@ -7,7 +7,11 @@
 
 ## Highlights (click any clip for the full 60 s video)
 
-**NEW: Crossing a British river suspension bridge into a small town** — from [`continuous_m2_v1.mp4`](continuous_m2_v1.mp4), conditioned on a real satellite screenshot (white pylons + fanned cables, box-junction hatches, moving left arc through the town junction):
+**NEW: Up a tree-lined Milan avenue, ending with a pan into the park** — from [`continuous_m3_v1.mp4`](continuous_m3_v1.mp4), conditioned on a real satellite screenshot (zebra start, piazza on the right, park-lawns finale):
+
+[![M3 Milan avenue](assets/m3_park.gif)](continuous_m3_v1.mp4)
+
+**Crossing a British river suspension bridge into a small town** — from [`continuous_m2_v1.mp4`](continuous_m2_v1.mp4), conditioned on a real satellite screenshot (white pylons + fanned cables, box-junction hatches, moving left arc through the town junction):
 
 [![M2 suspension bridge](assets/m2_bridge.gif)](continuous_m2_v1.mp4)
 
