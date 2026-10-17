@@ -7,21 +7,25 @@
 
 ## Highlights (click any clip for the full 60 s video)
 
-**Rolling 90° right turn at the real T-junction** — from [`continuous_m1_v1.mp4`](videos/continuous_m1_v1.mp4), conditioned on a real satellite screenshot:
+**NEW: Crossing a British river suspension bridge into a small town** — from [`continuous_m2_v1.mp4`](continuous_m2_v1.mp4), conditioned on a real satellite screenshot (white pylons + fanned cables, box-junction hatches, moving left arc through the town junction):
 
-[![M1 junction turn](assets/m1_turn.gif)](videos/continuous_m1_v1.mp4)
+[![M2 suspension bridge](assets/m2_bridge.gif)](continuous_m2_v1.mp4)
+
+**Rolling 90° right turn at the real T-junction** — from [`continuous_m1_v1.mp4`](continuous_m1_v1.mp4), conditioned on a real satellite screenshot:
+
+[![M1 junction turn](assets/m1_turn.gif)](continuous_m1_v1.mp4)
 
 **Same ride, opening leg** — quiet-street S-curve with the live-dot satellite minimap in the corner:
 
-[![M1 opening](assets/m1_start.gif)](videos/continuous_m1_v1.mp4)
+[![M1 opening](assets/m1_start.gif)](continuous_m1_v1.mp4)
 
-**Cresting the stone arch bridge** — Jiangnan canal town, from [`continuous_r1_v2.mp4`](videos/continuous_r1_v2.mp4):
+**Cresting the stone arch bridge** — Jiangnan canal town, from [`continuous_r1_v2.mp4`](continuous_r1_v2.mp4):
 
-[![R1 bridge](assets/r1_bridge.gif)](videos/continuous_r1_v2.mp4)
+[![R1 bridge](assets/r1_bridge.gif)](continuous_r1_v2.mp4)
 
-**Causeway across the lotus lake** — Yuanmingyuan-style park, from [`continuous_yym_v3.mp4`](videos/continuous_yym_v3.mp4):
+**Causeway across the lotus lake** — Yuanmingyuan-style park, from [`continuous_yym_v3.mp4`](continuous_yym_v3.mp4):
 
-[![v3 causeway](assets/yym_causeway.gif)](videos/continuous_yym_v3.mp4)
+[![v3 causeway](assets/yym_causeway.gif)](continuous_yym_v3.mp4)
 
 ---
 
